@@ -1,0 +1,3 @@
+to build:
+cmake -Bbuild
+cmake --build build
