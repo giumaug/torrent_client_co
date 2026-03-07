@@ -24,4 +24,4 @@ struct NodePeer
 };
 
 std::string makeNodeId();
-NodePeer findPeers(std::string infoHash, std::string nodeId, std::string ip, unsigned short port);
+boost::asio::awaitable<NodePeer> findPeers(boost::asio::io_context &io, std::string infoHash, std::string nodeId, std::string ip, unsigned short port);

@@ -19,7 +19,7 @@ target_sources(Torrent
     ${CMAKE_SOURCE_DIR}/src/torrent/Logger.cpp
 )
 
-target_link_libraries(Torrent PRIVATE OpenSSL::Crypto cpr::cpr)
+target_link_libraries(Torrent PRIVATE OpenSSL::Crypto cpr::cpr stdc++exp)
 
 
   

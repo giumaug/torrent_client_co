@@ -26,15 +26,18 @@ struct Message
 class PeerSession
 {
 private:
-  boost::asio::io_context io_context;
-  boost::asio::ip::tcp::socket socket {io_context};
-  std::size_t async_receive(std::vector<unsigned char> &buffer);
-  std::size_t async_write(std::vector<unsigned char> &buffer);
+  boost::asio::io_context& context;
+  //boost::asio::ip::tcp::socket socket {io_context};
+  boost::asio::ip::tcp::socket socket;
+  std::string _ip;
+  unsigned short _port = 0;
 
 public:
-  void open(std::string _ip, unsigned short _port);
+  PeerSession(boost::asio::any_io_executor defaultExecutor, boost::asio::io_context& _context);
+  ~PeerSession();
+  boost::asio::awaitable<void> open(std::string _ip, unsigned short _port);
   void close();
-  void send(Message message);
-  Message receive();
-  bool handshake(std::string infoHash, std::string peerId);
+  boost::asio::awaitable<void> send(Message message);
+  boost::asio::awaitable<Message> receive();
+  boost::asio::awaitable<bool> handshake(std::string infoHash, std::string peerId);
 };

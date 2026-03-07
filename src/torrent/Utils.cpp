@@ -12,7 +12,25 @@ std::string doSha1(std::string src)
        src.length(),
        reinterpret_cast<unsigned char *>(const_cast<char *>(dest.c_str())));
   //printSha1(dest);
+  if (dest.size() > 20)
+    {
+      while(1)
+      {
+        std::cout << "PANIC!!!" << std::endl;
+      }
+    } 
   return dest;
+}
+
+std::string ___doSha1(const std::string src)
+{
+    // Ensure the string has exactly 20 bytes of space
+    std::string dest(SHA_DIGEST_LENGTH, '\0');
+
+    SHA1(reinterpret_cast<const unsigned char*>(src.data()),
+         src.size(),
+         reinterpret_cast<unsigned char*>(&dest[0])); // Modern, safe way to get non-const ptr    
+    return dest;
 }
 
 std::string randomSequence(unsigned short size, unsigned short start, unsigned short end)

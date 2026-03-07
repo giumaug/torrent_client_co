@@ -1,11 +1,12 @@
 #include <iostream>
 #include "torrent/Torrent.hpp"
 
-constexpr auto torrent_file_path = "/home/peppe/Desktop/vlsi/cpp/torrent_client/doc/torrent_files/2.torrent";
-constexpr auto download_file_path = "/home/peppe/Desktop/vlsi/cpp/torrent_client/doc/torrent_files/download";
+constexpr auto torrent_file_path = "/home/peppe/Desktop/vlsi/cpp/torrent_client_co/doc/torrent_files/2.torrent";
+constexpr auto download_file_path = "/home/peppe/Desktop/vlsi/cpp/torrent_client_co/doc/torrent_files/download";
 constexpr auto block_size = 16384;
 constexpr auto requests_num = 5;
-constexpr auto dht_boostrap_node_ip = "67.215.246.10";
+//constexpr auto dht_boostrap_node_ip = "67.215.246.10";//orig
+constexpr auto dht_boostrap_node_ip = "87.98.162.88"; // "82.221.103.244";
 constexpr auto dht_boostrap_node_port = 6881;
 
 int main()

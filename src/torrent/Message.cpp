@@ -1,42 +1,36 @@
 #include "Common.hpp"
 #include "Message.hpp"
 #include "iostream"
+#include <boost/asio/cancel_after.hpp>
 
-void PeerSession::open(std::string ip, unsigned short port)
+PeerSession::~PeerSession()
+{
+  boost::system::error_code ec;
+  socket.close(ec);
+  auto now = std::chrono::system_clock::now();
+}
+
+PeerSession::PeerSession(boost::asio::any_io_executor defaultExecutor, 
+  boost::asio::io_context& _context) : 
+  socket{defaultExecutor}, 
+  context{_context}
+{}
+
+boost::asio::awaitable<void> PeerSession::open(std::string ip, unsigned short port)
 {
   try
   {
-    bool timeout_occurred = false;
-    boost::asio::steady_timer timer(io_context);    
-    this->socket.async_connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address(ip), port),
-    [&timeout_occurred, &timer](const boost::system::error_code& ec) 
-      {
-        if (!ec && !timeout_occurred) 
-        {
-          timer.cancel();
-        }
-      });
-
-    timer.expires_after(std::chrono::milliseconds(500));
-    timer.async_wait([&](const boost::system::error_code& ec) 
-    {
-      if (!ec) 
-      {
-        timeout_occurred = true;
-        socket.cancel();
-      }
-    });
-
-    std::thread run_thread([&]() {
-      io_context.restart();
-      io_context.run();
-      });
-    run_thread.join();
+     _port = port;
+    _ip = ip;
+    co_await this->socket.async_connect(
+      boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address(ip), port),
+      boost::asio::cancel_after(std::chrono::milliseconds(500), boost::asio::use_awaitable));
   } 
   catch (std::exception &e)
   {
     throw TorrentException(OPEN_SESSION_FAILED);
   }
+  co_return;
 }
 
 void PeerSession::close()
@@ -51,7 +45,7 @@ void PeerSession::close()
   }
 }
 
-void PeerSession::send(Message message)
+boost::asio::awaitable<void> PeerSession::send(Message message)
 {
   try
   {
@@ -66,22 +60,32 @@ void PeerSession::send(Message message)
       for (int i = 0; i < message.length - 1; i++)
         buffer[i + 5] = message.payload[i];
     }
-    this->socket.send(boost::asio::buffer(buffer), 0);
+    co_await this->socket.async_send(boost::asio::buffer(buffer), 
+    boost::asio::cancel_after(std::chrono::milliseconds(5000), boost::asio::use_awaitable));
   }
   catch (std::exception &e)
   {
+    std::cout << "desc write error--on" << _ip << ":" << _port << e.what() << std::endl;
     throw TorrentException(OPEN_SESSION_FAILED);
   }
+  catch (...)
+  {
+    std::cout << "desc1 write error--on" << _ip << ":" << _port << std::endl;
+    throw TorrentException(OPEN_SESSION_FAILED);
+  }
+  co_return;
 }
 
-Message PeerSession::receive()
+boost::asio::awaitable<Message> PeerSession::receive()
 {
   std::vector<unsigned char> headerBuffer(5);
   Message message;
 
   try
   {
-    std::size_t read_data = async_receive(headerBuffer);
+    std::size_t read_data = co_await async_read(socket,
+      boost::asio::buffer(headerBuffer),
+      boost::asio::cancel_after(std::chrono::milliseconds(5000), boost::asio::use_awaitable));
     if (read_data > 0)
     {
       int msgLength = (headerBuffer[0] << 24) + (headerBuffer[1] << 16) + (headerBuffer[2] << 8) + headerBuffer[3];
@@ -90,7 +94,9 @@ Message PeerSession::receive()
       if (msgLength > 1)
       {
         std::vector<unsigned char> payloadBuffer(msgLength - 1);
-        std::size_t read_data = async_receive(payloadBuffer);
+        std::size_t read_data = co_await async_read(socket,
+          boost::asio::buffer(payloadBuffer),
+          boost::asio::cancel_after(std::chrono::milliseconds(5000), boost::asio::use_awaitable));
         if (read_data > 0)
         {
           message.payload = std::move(payloadBuffer);
@@ -108,12 +114,18 @@ Message PeerSession::receive()
   }
   catch (std::exception &e)
   {
+    std::cout << "desc read error--on" << _ip << ":" << _port << e.what() << std::endl;
     throw TorrentException(READ_ERROR);
   }
-  return message;
+  catch (...)
+  {
+    std::cout << "desc1 read error--on" << _ip << ":" << _port << std::endl;
+    throw TorrentException(READ_ERROR);
+  }
+  co_return message;
 }
 
-bool PeerSession::handshake(std::string infoHash, std::string peerId)
+ boost::asio::awaitable<bool> PeerSession::handshake(std::string infoHash, std::string peerId)
 {
   try
   {
@@ -126,18 +138,24 @@ bool PeerSession::handshake(std::string infoHash, std::string peerId)
     for (auto v : {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}) wBuffer.push_back(char(v));
     for (auto v : infoHash) wBuffer.push_back(v);
     for (auto v : peerId) wBuffer.push_back(v);
+
+    write_data = co_await boost::asio::async_write(socket,
+    boost::asio::buffer(wBuffer),
+    boost::asio::cancel_after(std::chrono::milliseconds(5000), boost::asio::use_awaitable));
     
-    write_data = async_write(wBuffer);
     if (write_data > 0)
     {
-      read_data = async_receive(rBuffer);
+      read_data = co_await async_read(socket,
+        boost::asio::buffer(rBuffer),
+        boost::asio::cancel_after(std::chrono::milliseconds(500), boost::asio::use_awaitable));
     }
-    return (read_data > 0) && (write_data > 0);
+    co_return (read_data > 0) && (write_data > 0);
   }
   catch (std::exception &e)
   {
     throw TorrentException(HANDSHAKE_ERROR);
   }
+  co_return false;
 }
 
 std::vector<unsigned char> Message::makeRequestPayload(unsigned int index, unsigned int begin, unsigned int blockSize)
@@ -157,74 +175,4 @@ std::vector<unsigned char> Message::makeRequestPayload(unsigned int index, unsig
   payload[10] = (blockSize >> 8) & 0xff;
   payload[11] = blockSize & 0xff;
   return payload;
-}
-
-std::size_t PeerSession::async_receive(std::vector<unsigned char> &buffer)
-{
-  boost::asio::steady_timer timer(io_context);  
-  bool timeout_occurred = false;
-  std::size_t read_data = 0;
-  
-  boost::asio::async_read(socket,
-    boost::asio::buffer(buffer),
-      [&timeout_occurred, &read_data, &timer](const boost::system::error_code& ec, std::size_t bytes_recvd) 
-      {
-        if (!ec && !timeout_occurred) 
-        {
-          read_data = bytes_recvd;
-          timer.cancel();
-        }
-      });
-
-  timer.expires_after(std::chrono::milliseconds(500));
-  timer.async_wait([&](const boost::system::error_code& ec) 
-  {
-    if (!ec) 
-    {
-      timeout_occurred = true;
-      socket.cancel();
-    }
-  });
-
-  std::thread run_thread([&]() {
-    io_context.restart();
-    io_context.run();
-  });
-  run_thread.join();
-  return read_data;
-}
-
-std::size_t PeerSession::async_write(std::vector<unsigned char> &buffer)
-{
-  boost::asio::steady_timer timer(io_context);  
-  bool timeout_occurred = false;
-  std::size_t read_data = 0;
-  
-  boost::asio::async_write(socket,
-    boost::asio::buffer(buffer),
-      [&timeout_occurred, &read_data, &timer](const boost::system::error_code& ec, std::size_t bytes_recvd) 
-      {
-        if (!ec && !timeout_occurred) 
-        {
-          read_data = bytes_recvd;
-          timer.cancel();
-        }
-      });
-
-  timer.expires_after(std::chrono::milliseconds(500));
-  timer.async_wait([&](const boost::system::error_code& ec) 
-  {
-    if (!ec) 
-    {
-      timeout_occurred = true;
-      socket.cancel();
-    }
-  });
-
-  std::thread run_thread([&]() {
-    io_context.restart();
-    io_context.run();
-  });
-  run_thread.join();
-  return read_data;
 }

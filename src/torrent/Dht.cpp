@@ -17,7 +17,7 @@ std::string makeNodeId()
   return doSha1(randomSequence(20, 33, 126));
 }
 
-NodePeer findPeers(std::string infoHash, std::string nodeId, std::string ip, unsigned short port)
+boost::asio::awaitable<NodePeer> findPeers(boost::asio::io_context &io, std::string infoHash, std::string nodeId, std::string ip, unsigned short port)
 {
   NodePeer nodePeer;
   try
@@ -34,42 +34,18 @@ NodePeer findPeers(std::string infoHash, std::string nodeId, std::string ip, uns
                  {"id", bencode::string(nodeId)},
                  {"info_hash", bencode::string(infoHash)}}}});
 
-    //std::cout << "port is" << port << std::endl;
     udp::endpoint remote_endpoint = udp::endpoint(boost::asio::ip::make_address_v4(ip), port);
-    boost::asio::io_context io_context;
-    udp::socket socket(io_context);
+    udp::socket socket(io);
     socket.open(udp::v4());
-    socket.send_to(boost::asio::buffer(query), remote_endpoint);
-    boost::asio::steady_timer timer(io_context);
+    co_await socket.async_send_to(boost::asio::buffer(query), remote_endpoint, boost::asio::use_awaitable);
     std::vector<unsigned char> xxx(486);
     bool timeout_occurred = false;
     std::size_t read_data = 0;
 
-    socket.async_receive_from(
+    read_data = co_await socket.async_receive_from(
       boost::asio::buffer(queryResponse), remote_endpoint,
-        [&timeout_occurred, &read_data, &timer](const boost::system::error_code& ec, std::size_t bytes_recvd) 
-        {
-          if (!ec && !timeout_occurred) 
-          {
-            read_data = bytes_recvd;
-            timer.cancel();
-          }
-        });
-    timer.expires_after(std::chrono::milliseconds(500));
-    timer.async_wait([&](const boost::system::error_code& ec) 
-    {
-      if (!ec) 
-      {
-        timeout_occurred = true;
-        socket.cancel();
-      }
-    });
-      std::thread run_thread([&]() {
-      io_context.restart();
-      io_context.run();
-    });
-    run_thread.join();
-
+      boost::asio::cancel_after(std::chrono::milliseconds(500), boost::asio::use_awaitable));
+        
     if (read_data > 0)
     {
       bool foundNode = false;
@@ -87,7 +63,6 @@ NodePeer findPeers(std::string infoHash, std::string nodeId, std::string ip, uns
           for (auto it = vNodes.begin(); it != vNodes.end(); it += 26)
           {
             std::stringstream _ip;
-            //std::string _nodeId(it, it + 19);
             std::string _nodeId = nodeId;
             _ip << (int)*(it + 20) << "." << (int)*(it + 21) << "." << (int)*(it + 22) << "." << (int)*(it + 23);
             uint16_t _port = *(it + 25) + (*(it + 24) << 8);
@@ -121,9 +96,9 @@ NodePeer findPeers(std::string infoHash, std::string nodeId, std::string ip, uns
   }
   catch (std::exception &e)
   {
-  
+    //std::cout << "Exception on DHT!!!!" << std::endl;
   }
-  return nodePeer;
+  co_return nodePeer;
 }
 
 
