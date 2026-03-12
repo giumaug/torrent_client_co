@@ -17,10 +17,13 @@ enum DOWNLOAD_STATUS
 
 struct PieceBuffer
 {
+  unsigned short port;
+  std::string ip;
   unsigned int index;
   std::vector<char> data;
   public:
     PieceBuffer(unsigned int _index, std::vector<char> _data );
+    ~PieceBuffer();
 };
 
 struct BlocksBuffer
@@ -109,4 +112,5 @@ private:
   std::multimap<std::string, bool> threadsMap;
   boost::asio::strand<boost::asio::io_context::executor_type> threadMapStd = boost::asio::make_strand(io);
   boost::asio::awaitable<void> releasePendingPieces(Peer &peer);
+  boost::asio::awaitable<void> queueCheck();
 };

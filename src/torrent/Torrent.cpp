@@ -18,6 +18,12 @@
 PieceBuffer::PieceBuffer(unsigned int _index, std::vector<char> _data) : index{_index}, data{_data}
 {}
 
+PieceBuffer::~PieceBuffer()
+{
+  auto now = std::chrono::system_clock::now();
+  std::cout << std::format("{:%F %T}", now) << "Inside PieceBuffer destructor" << ip << ":" << std::to_string(port) << std::endl;
+}
+
 Peer::Peer(std::string _ip, unsigned short _port, unsigned int pieceLength, unsigned int blocksCount) : ip{_ip}, port{_port}, blocksBuffer(pieceLength, blocksCount)
 {
   status = CHOKED;
@@ -371,8 +377,30 @@ boost::asio::awaitable<void> Torrent::downloadFromPeer(std::string ip, unsigned 
                 rcvPiecesNum++;
                 piecesStatus[peer.pieceIndex] = static_cast<std::byte>(DOWNLOADED);
                 co_await boost::asio::post(defaultExecutor, boost::asio::use_awaitable);
+                
+                 co_await logger.log(DEBUG, peer.ip + ":" + std::to_string(peer.port) + "peer.blocksBuffer.data size is" + std::to_string(peer.blocksBuffer.data.size()) , printStd);
+                 if (peer.blocksBuffer.data.size() > 262144)
+                 {
+                    co_await logger.log(DEBUG, peer.ip + ":" + std::to_string(peer.port) + "PANIC on peer.blocksBuffer.data size is" + std::to_string(peer.blocksBuffer.data.size()) , printStd);
+                 }
+
                 PieceBuffer pieceBuffer(peer.pieceIndex, peer.blocksBuffer.data);
+                pieceBuffer.ip = peer.ip;
+                pieceBuffer.port = peer.port;
+                
+                //-------------------------
+                co_await queueCheck();
                 co_await boost::asio::post(pQueueStd, boost::asio::use_awaitable);
+                if (peer.blocksBuffer.data.size() > 262144)
+                {
+                  std::cout << "PANIC on peer.blocksBuffer.data size is" << std::to_string(peer.blocksBuffer.data.size()) << std::endl;
+                }
+                if (pieceBuffer.data.size() > 262144 )
+                {
+                  std::cout << "PANIC pieceBuffer.data.size size is" << std::to_string(pieceBuffer.data.size()) << std::endl;
+                }
+                //----------------------------
+
                 this->piecesQueue.push(pieceBuffer);
                 co_await boost::asio::post(defaultExecutor, boost::asio::use_awaitable);
                 if (rcvPiecesNum == piecesNum)
@@ -506,7 +534,8 @@ boost::asio::awaitable<void> Torrent::storePieces(std::string downloadedFilePath
     co_await boost::asio::post(this->pQueueStd, boost::asio::use_awaitable);
     if (!this->piecesQueue.empty())
     {
-      PieceBuffer pieceBuffer = std::move(this->piecesQueue.front());
+      //PieceBuffer pieceBuffer = std::move(this->piecesQueue.front());
+      PieceBuffer pieceBuffer = this->piecesQueue.front();
       this->piecesQueue.pop();
       co_await boost::asio::post(defaultExecutor, boost::asio::use_awaitable);
       fileDesc.seekp(pieceBuffer.index * this->pieceLength);
@@ -523,3 +552,29 @@ boost::asio::awaitable<void> Torrent::storePieces(std::string downloadedFilePath
   co_await logger.log(DEBUG, "Store completed!!!", printStd);
   co_return;
 }
+
+boost::asio::awaitable<void> Torrent::queueCheck()
+{
+  auto defaultExecutor = co_await boost::asio::this_coro::executor;
+  std::queue<PieceBuffer> temp;
+
+  co_await boost::asio::post(this->pStatusStd, boost::asio::use_awaitable);
+  auto now = std::chrono::system_clock::now();
+  std::cout << std::format("{:%F %T}", now) << "Entering queueCheck" << std::endl;
+  while (!this->piecesQueue.empty()) 
+  {
+    PieceBuffer pieceBuffer = this->piecesQueue.front();
+    if (pieceBuffer.data.size() > 262144)
+    {
+      std::cout << "PANIC pieceBuffer.data.size size is" << std::to_string(pieceBuffer.data.size()) << std::endl;
+    }
+    temp.push(pieceBuffer);
+    this->piecesQueue.pop();
+  }
+  this->piecesQueue.swap(temp);
+  auto now2 = std::chrono::system_clock::now();
+  std::cout << std::format("{:%F %T}", now2) << "Leaving queueCheck" << std::endl;
+  co_await boost::asio::post(defaultExecutor, boost::asio::use_awaitable);
+}
+
+
