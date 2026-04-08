@@ -1,5 +1,4 @@
 #include <boost/asio.hpp>
-//#include <boost/asio/spawn.hpp>
 #include <string>
 #include <vector>
 #include <mutex>
@@ -17,13 +16,16 @@ enum DOWNLOAD_STATUS
 
 struct PieceBuffer
 {
+  std::string hash;
   unsigned short port;
   std::string ip;
   unsigned int index;
   std::vector<char> data;
   public:
-    PieceBuffer(unsigned int _index, std::vector<char> _data );
-    ~PieceBuffer();
+     //PieceBuffer(const PieceBuffer& other);
+     PieceBuffer(unsigned int _index, std::vector<char>&& _data );
+     //PieceBuffer& operator=(const PieceBuffer& other);
+    //~PieceBuffer();
 };
 
 struct BlocksBuffer
@@ -67,50 +69,35 @@ public:
 
 private:
   void parseTorrentFile(std::string torrentURL);
-  //void announce(std::string torrentURL, std::string ip, std::string port, std::string event);
   void execute();
   boost::asio::awaitable<void> storePieces(std::string downloadedFilePath);
   boost::asio::awaitable<void> downloadFromPeer(std::string ip, unsigned short port, unsigned int pieceLength, unsigned int blocksCount);
   boost::asio::awaitable<bool> selectPeace(PeerSession &peerSession, Peer &peer);
   boost::asio::awaitable<void> downloadCo(std::string torrentURL, std::string dhtBoostrapNodeIp, uint16_t dhtBoostrapNodePort, std::string downloadedFilePath);
-  //void __download(std::string torrentURL, std::string dhtBoostrapNodeIp, uint16_t dhtBoostrapNodePort, std::string downloadedFilePath);
   std::string name;
   std::string peerId;
   std::string infoHash;
   std::vector<std::byte> piecesStatus;
   boost::asio::io_context io;
   std::optional<boost::asio::executor_work_guard<boost::asio::io_context::executor_type>> guard;
-  //std::mutex pStatusMtx;
-  //boost::asio::strand<boost::asio::any_io_executor> pStatusStd = boost::asio::make_strand(io);
-  //boost::asio::strand<boost::asio::io_context::executor_type> pStatusStd;
-  boost::asio::strand<boost::asio::io_context::executor_type> pStatusStd = boost::asio::make_strand(io);
+  boost::asio::strand<boost::asio::io_context::executor_type> pStatusStd;
   unsigned int pieceLength;
   unsigned int lastPieceLength;
   unsigned int piecesNum;
   unsigned int rcvPiecesNum = 0;
   std::vector<char> piecesHash;
   std::queue<PieceBuffer> piecesQueue;
-  //std::mutex pQueueMtx;
-  //boost::asio::strand<boost::asio::any_io_executor> pQueueStd = boost::asio::make_strand(io);
-  //boost::asio::strand<boost::asio::io_context::executor_type> pQueueStd;
-  boost::asio::strand<boost::asio::io_context::executor_type> pQueueStd = boost::asio::make_strand(io);
+  boost::asio::strand<boost::asio::io_context::executor_type> pQueueStd;
   std::atomic<DOWNLOAD_STATUS> status;
-  //std::mutex statusMtx;
-  //boost::asio::strand<boost::asio::any_io_executor> statusStd = boost::asio::make_strand(io);
-  //boost::asio::strand<boost::asio::io_context::executor_type> statusStd;
-  boost::asio::strand<boost::asio::io_context::executor_type> statusStd = boost::asio::make_strand(io);
+  boost::asio::strand<boost::asio::io_context::executor_type> statusStd;
   unsigned int interval = 1;
   unsigned int const blockSize;       // 16384;
   unsigned int const parallelReqsNum; // = 5;
-  //std::mutex printMtx;
-  boost::asio::strand<boost::asio::io_context::executor_type> printStd = boost::asio::make_strand(io);
+  boost::asio::strand<boost::asio::io_context::executor_type> printStd;
   Logger logger;
   unsigned int threadNum;
   std::thread workerThread;
-  std::string _ip;
-  unsigned short _port;
   std::multimap<std::string, bool> threadsMap;
-  boost::asio::strand<boost::asio::io_context::executor_type> threadMapStd = boost::asio::make_strand(io);
+  boost::asio::strand<boost::asio::io_context::executor_type> threadMapStd;
   boost::asio::awaitable<void> releasePendingPieces(Peer &peer);
-  boost::asio::awaitable<void> queueCheck();
 };

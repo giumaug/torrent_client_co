@@ -1,4 +1,3 @@
-
 #include <boost/asio.hpp>
 #include <iostream>
 #include <vector>
@@ -89,15 +88,11 @@ boost::asio::awaitable<NodePeer> findPeers(boost::asio::io_context &io, std::str
         }
       }
       if (!foundNode)
-      {
-        //std::cout << "Nothing here!!!" << std::endl;
-      }
+      {}
     }
   }
   catch (std::exception &e)
-  {
-    //std::cout << "Exception on DHT!!!!" << std::endl;
-  }
+  {}
   co_return nodePeer;
 }
 

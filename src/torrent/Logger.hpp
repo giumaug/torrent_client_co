@@ -21,6 +21,5 @@ class Logger
     boost::asio::awaitable<void> log(LogLevel level, std::string logString, boost::asio::strand<boost::asio::io_context::executor_type> &printStd);
     void log(LogLevel level, std::string logString);
   private:
-    //std::mutex mtx;
     LogLevel level;
 };

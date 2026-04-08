@@ -27,10 +27,7 @@ class PeerSession
 {
 private:
   boost::asio::io_context& context;
-  //boost::asio::ip::tcp::socket socket {io_context};
   boost::asio::ip::tcp::socket socket;
-  std::string _ip;
-  unsigned short _port = 0;
 
 public:
   PeerSession(boost::asio::any_io_executor defaultExecutor, boost::asio::io_context& _context);

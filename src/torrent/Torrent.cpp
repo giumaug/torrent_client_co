@@ -13,16 +13,32 @@
 #include "Torrent.hpp"
 #include "Utils.hpp"
 #include "Dht.hpp"
-//#include <stacktrace>
 
-PieceBuffer::PieceBuffer(unsigned int _index, std::vector<char> _data) : index{_index}, data{_data}
+PieceBuffer::PieceBuffer(unsigned int _index, std::vector<char>&& _data) : index{_index}, data{std::move(_data)}
 {}
 
-PieceBuffer::~PieceBuffer()
-{
-  auto now = std::chrono::system_clock::now();
-  std::cout << std::format("{:%F %T}", now) << "Inside PieceBuffer destructor" << ip << ":" << std::to_string(port) << std::endl;
-}
+//PieceBuffer::PieceBuffer(const PieceBuffer& other) 
+//{
+//  this->port = other.port;
+//  this->ip = other.ip;
+//  this->index = other.index; 
+//  this->data = other.data;
+//}
+//
+//PieceBuffer& PieceBuffer::operator=(const PieceBuffer& other)
+//{
+//   if (this == &other) {
+//        return *this;
+//    }
+//    port = other.port;
+//    ip = other.ip;
+//    index = other.index;
+//   data = other.data;
+//    return *this;
+//}
+//
+//PieceBuffer::~PieceBuffer()
+//{}
 
 Peer::Peer(std::string _ip, unsigned short _port, unsigned int pieceLength, unsigned int blocksCount) : ip{_ip}, port{_port}, blocksBuffer(pieceLength, blocksCount)
 {
@@ -31,19 +47,20 @@ Peer::Peer(std::string _ip, unsigned short _port, unsigned int pieceLength, unsi
 
 BlocksBuffer::BlocksBuffer(unsigned int pieceLength, unsigned int blocksCount)
 {
-  data.resize(pieceLength);
-  status.resize(blocksCount);
-  this->reset(pieceLength, blocksCount);
+  data.resize(pieceLength, 55);
+  status.resize(blocksCount, false);
+  //this->reset(pieceLength, blocksCount);
 }
 
 void BlocksBuffer::reset(unsigned int pieceLength, unsigned int blocksCount)
 {
-  data.resize(pieceLength);
-  status.resize(blocksCount);
-  for (auto it = data.begin(); it != data.end(); ++it)
-    *it = 0;
-  for (auto it = status.begin(); it != status.end(); ++it)
-    *it = false;
+  //data.resize(pieceLength);
+  status.assign(blocksCount, false);
+  data = std::vector<char>(pieceLength,66);
+  //for (auto it = data.begin(); it != data.end(); ++it)
+  //  *it = 0;
+  //for (auto it = status.begin(); it != status.end(); ++it)
+  //  *it = false;
 }
 
 void Torrent::parseTorrentFile(std::string torrentURL)
@@ -75,13 +92,16 @@ void Torrent::parseTorrentFile(std::string torrentURL)
   }
 }
 
-Torrent::Torrent(unsigned int const _blockSize, unsigned int const _parallelReqsNum, LogLevel logLevel) : blockSize{_blockSize}, parallelReqsNum{_parallelReqsNum}, logger(logLevel)
+Torrent::Torrent(unsigned int const _blockSize, unsigned int const _parallelReqsNum, LogLevel logLevel) : 
+  blockSize{_blockSize}, parallelReqsNum{_parallelReqsNum}, logger(logLevel),
+  pStatusStd(boost::asio::make_strand(io)),
+  pQueueStd(boost::asio::make_strand(io)),
+  statusStd(boost::asio::make_strand(io)), 
+  printStd(boost::asio::make_strand(io)),
+  threadMapStd(boost::asio::make_strand(io)),
+  guard(boost::asio::make_work_guard(io))
 {
   peerId = randomSequence(20, 33, 126);
-  pStatusStd = boost::asio::make_strand(io);
-  pQueueStd = boost::asio::make_strand(io);
-  statusStd = boost::asio::make_strand(io);
-  guard.emplace(boost::asio::make_work_guard(io));
   workerThread = std::thread(&Torrent::execute, this);
 }
 
@@ -147,18 +167,16 @@ boost::asio::awaitable<void> Torrent::downloadCo(std::string torrentURL, std::st
        int counter = 0;
        if (nodePeer.peers.size() > 0)
        {
-          logger.log(ERROR, "Found peer list with size" + std::to_string(nodePeer.peers.size()));
+          logger.log(DEBUG, "Found peer list with size" + std::to_string(nodePeer.peers.size()));
           bool inserted = false;
           for (auto &_peer : nodePeer.peers)
           {
             auto key = _peer.ip + ":" + std::to_string(_peer.port);
-            co_await boost::asio::post(threadMapStd, boost::asio::use_awaitable);
+            co_await boost::asio::dispatch(bind_executor(threadMapStd, boost::asio::use_awaitable)); 
             if (!threadsMap.contains(key))
             {
-              std::cout << "Updating threadsMap with:" << key << std::endl;
               auto downloadStd = boost::asio::make_strand(defaultExecutor);
               threadsMap.emplace(key,true);
-              std::cout << "threadsMap size is" << threadsMap.size() << std::endl;
               boost::asio::co_spawn(downloadStd, 
                 downloadFromPeer(_peer.ip, _peer.port, this->pieceLength, (this->pieceLength / this->blockSize)),
                 boost::asio::detached);
@@ -196,7 +214,7 @@ boost::asio::awaitable<bool> Torrent::selectPeace(PeerSession &peerSession, Peer
   unsigned startIndex = peer.pieceIndex;
   auto defaultExecutor = co_await boost::asio::this_coro::executor;
 
-  co_await boost::asio::post(pStatusStd, boost::asio::use_awaitable);
+  co_await boost::asio::dispatch(bind_executor(pStatusStd, boost::asio::use_awaitable));
   while (!pieceFound && !endSearch)
   {
     unsigned int pieceByte = peer.pieceIndex / 8;
@@ -249,8 +267,6 @@ boost::asio::awaitable<bool> Torrent::selectPeace(PeerSession &peerSession, Peer
 
 boost::asio::awaitable<void> Torrent::downloadFromPeer(std::string ip, unsigned short port, unsigned int pieceLength, unsigned int blocksCount)
 {
-  this->_ip = ip;
-  this->_port = port;
   int exceptionNum;
   Peer peer(ip, port, pieceLength, blocksCount);
   std::string stacktrace;
@@ -267,7 +283,7 @@ boost::asio::awaitable<void> Torrent::downloadFromPeer(std::string ip, unsigned 
     co_await peerSession.open(peer.ip, peer.port);
     if (! co_await peerSession.handshake(this->infoHash, this->peerId))
       throw TorrentException(HANDSHAKE_ERROR);
-    co_await boost::asio::post(statusStd, boost::asio::use_awaitable);
+    co_await boost::asio::dispatch(bind_executor(statusStd, boost::asio::use_awaitable)); 
     if (status != DOWNLOADING && status != DOWNLOADED)
       status = DOWNLOADING;
     co_await boost::asio::post(defaultExecutor, boost::asio::use_awaitable);
@@ -315,7 +331,7 @@ boost::asio::awaitable<void> Torrent::downloadFromPeer(std::string ip, unsigned 
           if (peer.status == UNCHOKED)
           {
             peer.status = CHOKED;
-            co_await boost::asio::post(this->pStatusStd, boost::asio::use_awaitable);
+            co_await boost::asio::dispatch(bind_executor(this->pStatusStd, boost::asio::use_awaitable)); 
             int selectedPiece = peer.blocksBuffer.selectedPiece;
             if (selectedPiece != -1)
             {
@@ -373,39 +389,31 @@ boost::asio::awaitable<void> Torrent::downloadFromPeer(std::string ip, unsigned 
               {
                 bool _break = false;
                 co_await logger.log(DEBUG, std::to_string(peer.port) + "--- Found piece " + std::to_string(peer.pieceIndex), printStd);
-                co_await boost::asio::post(this->pStatusStd, boost::asio::use_awaitable);
+                co_await boost::asio::dispatch(bind_executor(this->pStatusStd, boost::asio::use_awaitable));
                 rcvPiecesNum++;
                 piecesStatus[peer.pieceIndex] = static_cast<std::byte>(DOWNLOADED);
                 co_await boost::asio::post(defaultExecutor, boost::asio::use_awaitable);
-                
-                 co_await logger.log(DEBUG, peer.ip + ":" + std::to_string(peer.port) + "peer.blocksBuffer.data size is" + std::to_string(peer.blocksBuffer.data.size()) , printStd);
-                 if (peer.blocksBuffer.data.size() > 262144)
-                 {
-                    co_await logger.log(DEBUG, peer.ip + ":" + std::to_string(peer.port) + "PANIC on peer.blocksBuffer.data size is" + std::to_string(peer.blocksBuffer.data.size()) , printStd);
-                 }
 
-                PieceBuffer pieceBuffer(peer.pieceIndex, peer.blocksBuffer.data);
+                char* dataPtr1 = peer.blocksBuffer.data.data();
+                std::string memAddr1 = std::format("--1--{} --- peer.blocksBuffer.data {}",std::to_string(peer.pieceIndex),  static_cast<void*>(dataPtr1));
+                co_await logger.log(DEBUG, memAddr1, printStd);
+
+                PieceBuffer pieceBuffer(peer.pieceIndex, std::move(peer.blocksBuffer.data));
                 pieceBuffer.ip = peer.ip;
                 pieceBuffer.port = peer.port;
+                pieceBuffer.hash = downloadPieceHash;
                 
-                //-------------------------
-                co_await queueCheck();
-                co_await boost::asio::post(pQueueStd, boost::asio::use_awaitable);
-                if (peer.blocksBuffer.data.size() > 262144)
-                {
-                  std::cout << "PANIC on peer.blocksBuffer.data size is" << std::to_string(peer.blocksBuffer.data.size()) << std::endl;
-                }
-                if (pieceBuffer.data.size() > 262144 )
-                {
-                  std::cout << "PANIC pieceBuffer.data.size size is" << std::to_string(pieceBuffer.data.size()) << std::endl;
-                }
-                //----------------------------
-
-                this->piecesQueue.push(pieceBuffer);
+                char* dataPtr2 = pieceBuffer.data.data();
+                std::string memAddr2 = std::format("--2--{} --- pieceBuffer.data.data {}",std::to_string(peer.pieceIndex),  static_cast<void*>(dataPtr2));
+                co_await logger.log(DEBUG, memAddr2, printStd);
+                
+                co_await boost::asio::dispatch(bind_executor(pQueueStd, boost::asio::use_awaitable)); 
+                this->piecesQueue.push(std::move(pieceBuffer));
                 co_await boost::asio::post(defaultExecutor, boost::asio::use_awaitable);
+                  
                 if (rcvPiecesNum == piecesNum)
                 {
-                  co_await boost::asio::post(this->statusStd, boost::asio::use_awaitable);
+                  co_await boost::asio::dispatch(bind_executor(this->statusStd, boost::asio::use_awaitable));
                   status = DOWNLOADED;
                   co_await boost::asio::post(defaultExecutor, boost::asio::use_awaitable);
                   _break = true;
@@ -416,7 +424,7 @@ boost::asio::awaitable<void> Torrent::downloadFromPeer(std::string ip, unsigned 
               else
               {
                 co_await logger.log(DEBUG, std::to_string(peer.port) + "--- HASH ERROR " + std::to_string(peer.pieceIndex), printStd);
-                co_await boost::asio::post(this->pStatusStd, boost::asio::use_awaitable);
+                co_await boost::asio::dispatch(bind_executor(this->pStatusStd, boost::asio::use_awaitable)); 
                 piecesStatus[peer.pieceIndex] = std::byte(NOT_DOWNLOADED);
                 co_await boost::asio::post(defaultExecutor, boost::asio::use_awaitable);
               }
@@ -485,11 +493,10 @@ boost::asio::awaitable<void> Torrent::downloadFromPeer(std::string ip, unsigned 
   }
   
   co_await releasePendingPieces(peer);
-  co_await boost::asio::post(threadMapStd, boost::asio::use_awaitable);
+  co_await boost::asio::dispatch(bind_executor(threadMapStd, boost::asio::use_awaitable)); 
   auto key = ip + ":" + std::to_string(port);
   threadsMap.erase(key);
   co_await boost::asio::post(defaultExecutor, boost::asio::use_awaitable);
-  std::cout << "Exiting from" << ip + ":" << std::to_string(port) << std::endl;
   co_return;
 }
 
@@ -497,7 +504,7 @@ boost::asio::awaitable<void> Torrent::releasePendingPieces(Peer &peer)
 {
   auto defaultExecutor = co_await boost::asio::this_coro::executor;
   bool isLog = false;
-  co_await boost::asio::post(this->pStatusStd, boost::asio::use_awaitable);
+  co_await boost::asio::dispatch(bind_executor(this->pStatusStd, boost::asio::use_awaitable)); 
   int selectedPiece = peer.blocksBuffer.selectedPiece;
   if (selectedPiece != -1)
   {
@@ -513,10 +520,6 @@ boost::asio::awaitable<void> Torrent::releasePendingPieces(Peer &peer)
   co_return;
 }
 
-//RACE CONDITION SU STRAND
-//https://gemini.google.com/app/dce2b18a0278ab8b
-//IMPORTANTE std::ofstream e' bloccante
-// https://gemini.google.com/app/287a5c6b411d297f
 boost::asio::awaitable<void> Torrent::storePieces(std::string downloadedFilePath)
 {
   auto defaultExecutor = co_await boost::asio::this_coro::executor;
@@ -531,13 +534,23 @@ boost::asio::awaitable<void> Torrent::storePieces(std::string downloadedFilePath
 
   while (storedPieces < this->piecesNum)
   {
-    co_await boost::asio::post(this->pQueueStd, boost::asio::use_awaitable);
+    co_await boost::asio::dispatch(bind_executor(this->pQueueStd, boost::asio::use_awaitable)); 
     if (!this->piecesQueue.empty())
     {
-      //PieceBuffer pieceBuffer = std::move(this->piecesQueue.front());
-      PieceBuffer pieceBuffer = this->piecesQueue.front();
+      PieceBuffer pieceBuffer = std::move(this->piecesQueue.front());
+
+      char* dataPtr = pieceBuffer.data.data();
+      std::string memAddr = std::format("--3--{} --- pieceBuffer.data.data {}",std::to_string(pieceBuffer.index),  static_cast<void*>(dataPtr));
+      co_await logger.log(DEBUG, memAddr, printStd);
+
+      std::string _tmp(pieceBuffer.data.begin(), pieceBuffer.data.end());
+      std::string hash = doSha1(_tmp);
+      if (pieceBuffer.hash != hash)
+        co_await logger.log(ERROR, "Corrupted piece:" + std::to_string(pieceBuffer.index), printStd);
+
+      //PieceBuffer pieceBuffer = this->piecesQueue.front();
       this->piecesQueue.pop();
-      co_await boost::asio::post(defaultExecutor, boost::asio::use_awaitable);
+      co_await boost::asio::dispatch(bind_executor(pQueueStd, boost::asio::use_awaitable));
       fileDesc.seekp(pieceBuffer.index * this->pieceLength);
       fileDesc.write(pieceBuffer.data.data(), pieceBuffer.data.size());
       storedPieces++;
@@ -551,30 +564,6 @@ boost::asio::awaitable<void> Torrent::storePieces(std::string downloadedFilePath
   fileDesc.close();
   co_await logger.log(DEBUG, "Store completed!!!", printStd);
   co_return;
-}
-
-boost::asio::awaitable<void> Torrent::queueCheck()
-{
-  auto defaultExecutor = co_await boost::asio::this_coro::executor;
-  std::queue<PieceBuffer> temp;
-
-  co_await boost::asio::post(this->pStatusStd, boost::asio::use_awaitable);
-  auto now = std::chrono::system_clock::now();
-  std::cout << std::format("{:%F %T}", now) << "Entering queueCheck" << std::endl;
-  while (!this->piecesQueue.empty()) 
-  {
-    PieceBuffer pieceBuffer = this->piecesQueue.front();
-    if (pieceBuffer.data.size() > 262144)
-    {
-      std::cout << "PANIC pieceBuffer.data.size size is" << std::to_string(pieceBuffer.data.size()) << std::endl;
-    }
-    temp.push(pieceBuffer);
-    this->piecesQueue.pop();
-  }
-  this->piecesQueue.swap(temp);
-  auto now2 = std::chrono::system_clock::now();
-  std::cout << std::format("{:%F %T}", now2) << "Leaving queueCheck" << std::endl;
-  co_await boost::asio::post(defaultExecutor, boost::asio::use_awaitable);
 }
 
 

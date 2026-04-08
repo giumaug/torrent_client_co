@@ -11,7 +11,7 @@ boost::asio::awaitable<void> Logger::log(LogLevel level, std::string logString, 
   if (level >= this->level)
   {
     auto now = std::chrono::system_clock::now();
-    co_await boost::asio::post(printStd, boost::asio::use_awaitable);
+    co_await boost::asio::dispatch(bind_executor(printStd, boost::asio::use_awaitable)); 
     std::cout << std::format("{:%F %T}", now) << logString << std::endl;
     co_await boost::asio::post(defaultExecutor, boost::asio::use_awaitable);
   }

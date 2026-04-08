@@ -7,7 +7,6 @@ PeerSession::~PeerSession()
 {
   boost::system::error_code ec;
   socket.close(ec);
-  auto now = std::chrono::system_clock::now();
 }
 
 PeerSession::PeerSession(boost::asio::any_io_executor defaultExecutor, 
@@ -20,8 +19,6 @@ boost::asio::awaitable<void> PeerSession::open(std::string ip, unsigned short po
 {
   try
   {
-     _port = port;
-    _ip = ip;
     co_await this->socket.async_connect(
       boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address(ip), port),
       boost::asio::cancel_after(std::chrono::milliseconds(500), boost::asio::use_awaitable));
@@ -65,12 +62,10 @@ boost::asio::awaitable<void> PeerSession::send(Message message)
   }
   catch (std::exception &e)
   {
-    std::cout << "desc write error--on" << _ip << ":" << _port << e.what() << std::endl;
     throw TorrentException(OPEN_SESSION_FAILED);
   }
   catch (...)
   {
-    std::cout << "desc1 write error--on" << _ip << ":" << _port << std::endl;
     throw TorrentException(OPEN_SESSION_FAILED);
   }
   co_return;
@@ -114,12 +109,10 @@ boost::asio::awaitable<Message> PeerSession::receive()
   }
   catch (std::exception &e)
   {
-    std::cout << "desc read error--on" << _ip << ":" << _port << e.what() << std::endl;
     throw TorrentException(READ_ERROR);
   }
   catch (...)
   {
-    std::cout << "desc1 read error--on" << _ip << ":" << _port << std::endl;
     throw TorrentException(READ_ERROR);
   }
   co_return message;
